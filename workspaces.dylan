@@ -291,16 +291,19 @@ define function update-registry-for-directory (conf, pkg-dir)
   local method parse-lids (dir, name, type)
           select (type)
             #"file" =>
-              if (ends-with?(name, ".lid"))
+              // Can we get rid of .hdp files???
+              if (ends-with?(name, ".lid") | ends-with?(name, ".hdp"))
                 let lid-path = merge-locators(as(<file-locator>, name), dir);
                 let lid = parse-lid-file(lid-path);
                 let libs = element(lid, #"library", default: #f);
                 let lib = ~empty?(libs) & libs[0];
                 if (~lib)
                   print("Skipping %s, it has no Library: line.", lid-path);
+                else
+                  // Let's just assume there's only a .lid or .hdp, and not both...
+                  let lids = element(lib2lid, lib, default: #[]);
+                  lib2lid[lib] := add(lids, lid);
                 end;
-                let lids = element(lib2lid, lib, default: #[]);
-                lib2lid[lib] := add(lids, lid);
               end;
             #"directory" =>
               // Skip git submodules; their use is a vestige of
