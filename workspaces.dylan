@@ -94,12 +94,14 @@ define function new (name :: <string>, pkg-names :: <seq>)
 end;
 
 // Update the workspace based on the workspace config or signal an error.
-define function update ()
+// If platform is provided, registries are written for that platform instead
+// of the current platform.
+define function update (#key platform :: false-or(<string>))
   let config = load-workspace-config($workspace-file);
   print("Workspace directory is %s.", config.workspace-directory);
   update-active-packages(config);
   update-active-package-deps(config);
-  update-registry(config);
+  update-registry(config, platform | as(<string>, os/$platform-name));
 end;
 
 // <config> holds the parsed workspace configuration file, and is the one object
@@ -241,18 +243,19 @@ define function find-active-package
       end
 end;
 
-// Create/update a single registry directory having an entry for each
-// library in each active package and all transitive dependencies.
-// This traverses package directories to find .lid files. Note that it
-// assumes that .lid files that have no "Platforms:" section are
-// generic, and writes a registry file for them.
-define function update-registry (conf :: <config>)
+// Create/update a registry directory with an entry for each library in each
+// workspace active package and all their transitive dependencies.  This
+// traverses package directories to find .lid files. Note that it assumes that
+// .lid files that have no "Platforms:" section are generic, and writes a
+// registry file for them. `platform` is normally the local platform but could
+// be a different platform for cross compilation.
+define function update-registry (conf :: <config>, platform :: <string>)
   for (pkg-name in conf.active-package-names)
     let pkg = find-active-package(conf, pkg-name);
     if (pkg)
       let pkg-dir = active-package-directory(conf, pkg-name);
-      update-registry-for-directory(conf, pkg-dir);
-      pm/do-resolved-deps(pkg, curry(update-registry-for-package, conf));
+      update-registry-for-directory(conf, platform, pkg-dir);
+      pm/do-resolved-deps(pkg, curry(update-registry-for-package, conf, platform));
     else
       print("WARNING: No package definition found for active package %s."
               " Not creating registry files.", pkg-name);
@@ -262,7 +265,7 @@ end;
 
 // Dig around in each `pkg`s directory to find the libraries it
 // defines and create registry files for them.
-define function update-registry-for-package (conf, pkg, dep, installed?)
+define function update-registry-for-package (conf, platform, pkg, dep, installed?)
   if (~installed?)
     workspace-error("Attempt to update registry for dependency %s, which"
                       " is not yet installed. This may be a bug.",
@@ -273,7 +276,7 @@ define function update-registry-for-package (conf, pkg, dep, installed?)
                 else
                   pm/source-directory(pkg)
                 end;
-  update-registry-for-directory(conf, pkg-dir);
+  update-registry-for-directory(conf, platform, pkg-dir);
 end;
 
 define constant $path-key = #"__path";
@@ -286,7 +289,7 @@ define constant $path-key = #"__path";
 // registry file twice for the same library without resorting to
 // putting "Platforms: none" in LID files that are included in other
 // LID files.)
-define function update-registry-for-directory (conf, pkg-dir)
+define function update-registry-for-directory (conf, platform, pkg-dir)
   let lib2lid = make(<istring-table>);  // library-name => list(lid-data)
   local method parse-lids (dir, name, type)
           select (type)
@@ -321,12 +324,11 @@ define function update-registry-for-directory (conf, pkg-dir)
 
   // For each library, write a LID if there's one explicitly for this platform,
   // or there's one with no Platforms: specified at all.
-  let platform = as(<string>, os/$platform-name);
   for (lids keyed-by lib in lib2lid)
     let candidates = #();
     block (done)
       for (lid in lids)
-        if (lid-has-platform?(lid, platform)) // TODO: rename to lid-has-platform?.
+        if (lid-has-platform?(lid, platform))
           candidates := list(lid);
           done();
         elseif (~element(lid, #"platforms", default: #f))
@@ -336,7 +338,7 @@ define function update-registry-for-directory (conf, pkg-dir)
     end block;
     select (candidates.size)
       0 => #f;  // Nothing for this platform.
-      1 => update-registry-for-lid(conf, candidates[0]);
+      1 => update-registry-for-lid(conf, platform, candidates[0]);
       otherwise =>
         print("WARNING: For library %s multiple .lid files apply to platform %s.\n"
                 "  %s\nRegistry will point to the first one, arbitrarily.",
@@ -344,7 +346,7 @@ define function update-registry-for-directory (conf, pkg-dir)
               join(candidates, "\n  ", key: method (lid)
                                               as(<string>, lid[$path-key])
                                             end));
-        update-registry-for-lid(conf, candidates[0]);
+        update-registry-for-lid(conf, platform, candidates[0]);
     end select;
   end for;
 end function update-registry-for-directory;
@@ -354,9 +356,8 @@ define function git-submodule? (dir :: <directory-locator>) => (_ :: <bool>)
   fs/file-exists?(dot-git)
 end;
 
-define function update-registry-for-lid (conf :: <config>, lid :: <table>)
+define function update-registry-for-lid (conf :: <config>, platform :: <string>, lid :: <table>)
   let lid-path :: <file-locator> = lid[$path-key];
-  let platform = as(<string>, os/$platform-name);
   let directory = subdirectory-locator(conf.registry-directory, platform);
   // The registry file must be written in lowercase so that on unix systems the
   // compiler can find it.
