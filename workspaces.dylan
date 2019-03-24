@@ -341,7 +341,7 @@ define function update-registry-for-directory (conf, platform, pkg-dir)
       1 => update-registry-for-lid(conf, platform, candidates[0]);
       otherwise =>
         print("WARNING: For library %s multiple .lid files apply to platform %s.\n"
-                "  %s\nRegistry will point to the first one, arbitrarily.",
+                "  %s\n  Registry will point to the first one, arbitrarily.",
               lib, platform,
               join(candidates, "\n  ", key: method (lid)
                                               as(<string>, lid[$path-key])
